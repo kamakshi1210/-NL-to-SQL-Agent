@@ -1,3 +1,6 @@
+## 🚀 Live Demo
+https://nl-sql-agent.streamlit.app
+
 # NL-to-SQL Agent 🤖
 
 An AI-powered chatbot that converts plain English questions into SQL queries and returns answers from a real database.
