@@ -6,3 +6,4 @@ streamlit
 python-dotenv
 openai
 sqlalchemy
+sqlglot
