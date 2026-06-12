@@ -105,7 +105,10 @@ if expert_mode and len(st.session_state.messages) > 0 and st.session_state.messa
                     llm_engine = toolkit.llm
                 else:
                     from sqlalchemy import create_engine
-                    engine = create_engine("sqlite:///file:company.db?mode=ro")
+                    engine = create_engine(
+                        "sqlite:///company.db", 
+                        connect_args={"check_same_thread": False}
+                    )
                     db_schema = SQLDatabase(engine).get_table_info()
                     llm_engine = ChatGroq(model="llama-3.3-70b-versatile", temperature=0, api_key=os.getenv("GROQ_API_KEY"))
                 
