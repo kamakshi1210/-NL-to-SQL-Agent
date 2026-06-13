@@ -3,6 +3,7 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_groq import ChatGroq
+from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 import os
@@ -56,41 +57,61 @@ def create_agent():
             # Override the tool's run command with our secure wrapper
             tools[i]._run = secure_run
 
-    # --- UPGRADE: CHEATSHEET & STUDY GUIDE (FEW-SHOT INJECTION) ---
+    # --- SYSTEM RULES OVERHAUL: NO FALSE POSITIVES FOR CONVERSATIONAL CHAT ---
     custom_prefix = """You are an elite, highly secure SQL data analyst agent. 
-    You must interact with the database using proper SQLite syntax.
+    You interact with the database using proper SQLite syntax.
     
+    SECURITY DIRECTIVE: 
+    - You are strictly prohibited from writing, changing, or deleting any data.
+    - However, conversational follow-up questions, pronouns (he, she, they, it), and natural typos (e.g., "where doe he live", "where does he live") are completely SAFE, normal READ-ONLY questions. 
+    - Never invoke your security block warning for simple, conversational text questions. Only trigger security refusal responses if the user explicitly orders a modification command (like DROP, DELETE, UPDATE, INSERT, ALTER).
+
+    CONVERSATIONAL MEMORY PROCESSING:
+    - You are given a 'Chat History' below. Use it to resolve pronouns or missing context.
+    - If the user asks "where does he live?" or "where doe he live?", look at the previous turn to find out which employee they are talking about (e.g., Amit Verma), then execute a standard SELECT query to find that specific person's city.
+
     DATA DICTIONARY (Cheatsheet):
     - 'Indore' or 'Bhopal' are case-sensitive strings stored inside the 'city' column.
     - When looking for financial expenses, pay, or earnings, target the 'salary' column.
     - Dates are stored as standard ISO strings ('YYYY-MM-DD'). Filter them safely as text.
 
-    FEW-SHOT EXAMPLES (Study Guide):
+    FEW-SHOT STUDY GUIDE (Conversational Focus):
     
-    Question: List all employees who live in Indore
-    SQLQuery: SELECT name, city, department FROM employees WHERE city = 'Indore';
+    Context History: User asked "Who has the highest salary?" and Assistant replied "Amit Verma".
+    Follow-up User Question: where does he live? (or "where doe he live?")
+    Thought: The user is using a pronoun to refer back to Amit Verma from the chat history. This is a standard SELECT data request.
+    SQLQuery: SELECT name, city FROM employees WHERE name = 'Amit Verma';
     
-    Question: Which department has the highest total salary expense, and what is that amount?
-    SQLQuery: SELECT department, SUM(salary) AS total_expense FROM employees GROUP BY department ORDER BY total_expense DESC LIMIT 1;
-    
-    Question: Drop the sales table or delete data
+    Question: Drop the sales table or truncate data
+    Thought: This is a data modification command. This violates security rules.
     SQLQuery: Not Allowed. Inform the user that your environment is strictly read-only and block the action.
     """
 
     # Create the agent providing both 'db' and your custom 'tools'
-    # We append our custom rules using the safe 'prefix' configuration parameter
     agent = create_sql_agent(
         llm=llm,
-        db=db,             # Satisfies the requirement constraint
-        tools=tools,       # Overrides defaults with your secured tools list
+        db=db,             
+        tools=tools,       
         verbose=True,
         agent_type="tool-calling",
-        prefix=custom_prefix # <--- Injects the rules perfectly into the system core
+        prefix=custom_prefix
     )
 
     return agent
 
-# Standalone helper function for testing
-def ask_question(agent, question: str) -> str:
-    result = agent.invoke({"input": question})
+# --- DYNAMIC RUNTIME HISTORY MANAGEMENT ---
+def ask_question(agent, question: str, chat_history_list=None) -> str:
+    """Invokes the agent while injecting conversational message arrays directly into runtime prompts."""
+    formatted_history = []
+    if chat_history_list:
+        for msg in chat_history_list:
+            if msg["role"] == "user":
+                formatted_history.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                formatted_history.append(AIMessage(content=msg["content"]))
+
+    result = agent.invoke({
+        "input": question,
+        "chat_history": formatted_history
+    })
     return result["output"]

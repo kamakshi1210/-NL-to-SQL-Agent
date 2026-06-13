@@ -28,8 +28,8 @@ import re
 import pandas as pd
 from sqlalchemy import create_engine
 
-# Import the updated creation function from your agent file
-from agent import create_agent
+# Import the updated creation function and the history runner from your agent file
+from agent import create_agent, ask_question
 
 load_dotenv()
 
@@ -196,8 +196,9 @@ if expert_mode and len(st.session_state.messages) > 0 and st.session_state.messa
             with st.spinner("Executing user-authorized query..."):
                 try:
                     execution_prompt = f"Run this exact SQL statement and summarize the results: {final_sql}"
-                    exec_result = agent.invoke({"input": execution_prompt})
-                    raw_response = exec_result["output"]
+                    
+                    # Run via the stateful custom ask_question engine, passing previous messages context!
+                    raw_response = ask_question(agent, execution_prompt, st.session_state.messages[:-1])
                     
                     # Clean conversational anomalies out of the response text
                     clean_response = clean_conversational_text(raw_response, final_sql)
@@ -219,24 +220,14 @@ elif len(st.session_state.messages) > 0 and st.session_state.messages[-1]["role"
         try:
             last_user_query = st.session_state.messages[-1]["content"]
             
-            # Capture the full tool-chain output response block
-            result = agent.invoke({"input": last_user_query})
-            raw_response = result["output"]
+            # UPGRADE: Run via the history-aware ask_question runner, passing chat logs for memory!
+            raw_response = ask_question(agent, last_user_query, st.session_state.messages[:-1])
             
-            # Try to dynamically extract what query the agent executed under the hood for diagnostics
+            # Fast fallback regex string scanner to isolate the executed SQL query for metrics visualization
             extracted_query_string = ""
-            for step in result.get("intermediate_steps", []):
-                if isinstance(step, tuple) and len(step) > 0:
-                    tool_action = step[0]
-                    if hasattr(tool_action, 'tool_input') and 'query' in tool_action.tool_input:
-                        extracted_query_string = tool_action.tool_input['query']
-                        break
-            
-            # If standard regex pattern string fallback is required
-            if not extracted_query_string:
-                sql_find = re.search(r"(SELECT.*?;)", raw_response, re.DOTALL | re.IGNORECASE)
-                if sql_find:
-                    extracted_query_string = sql_find.group(1)
+            sql_find = re.search(r"(SELECT.*?;)", raw_response, re.DOTALL | re.IGNORECASE)
+            if sql_find:
+                extracted_query_string = sql_find.group(1)
             
             # Scrub the matching inner query string text patterns out of verbal block
             clean_response = clean_conversational_text(raw_response, extracted_query_string)
